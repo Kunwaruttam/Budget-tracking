@@ -2,7 +2,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from src.core.database import get_db
-from src.core.security import verify_token
+from src.core.security import verify_access_token
 from .models import User
 
 security = HTTPBearer()
@@ -20,7 +20,7 @@ def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
     
-    payload = verify_token(token)
+    payload = verify_access_token(token)
     if payload is None:
         raise credentials_exception
         

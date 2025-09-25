@@ -70,7 +70,7 @@ def create_budget_category(
         name=new_category.name,
         description=new_category.description,
         budget_amount=new_category.budget_amount,
-        spent_amount=spent_amount,
+        total_expenses=spent_amount,
         remaining_budget=remaining_budget,
         user_id=new_category.user_id,
         color=new_category.color,
@@ -113,7 +113,7 @@ def get_budget_categories(
             name=category.name,
             description=category.description,
             budget_amount=category.budget_amount,
-            spent_amount=spent_amount,
+            total_expenses=spent_amount,
             remaining_budget=remaining_budget,
             user_id=category.user_id,
             color=category.color,
@@ -171,7 +171,7 @@ def get_budget_category(
         name=category.name,
         description=category.description,
         budget_amount=category.budget_amount,
-        spent_amount=spent_amount,
+        total_expenses=spent_amount,
         remaining_budget=remaining_budget,
         user_id=category.user_id,
         color=category.color,
@@ -254,7 +254,7 @@ def update_budget_category(
         name=category.name,
         description=category.description,
         budget_amount=category.budget_amount,
-        spent_amount=spent_amount,
+        total_expenses=spent_amount,
         remaining_budget=remaining_budget,
         user_id=category.user_id,
         color=category.color,
@@ -332,7 +332,14 @@ def get_budget_summary(
     categories_with_spending = db.query(
         BudgetCategory.id,
         BudgetCategory.name,
+        BudgetCategory.description,
         BudgetCategory.budget_amount,
+        BudgetCategory.color,
+        BudgetCategory.icon,
+        BudgetCategory.user_id,
+        BudgetCategory.is_active,
+        BudgetCategory.created_at,
+        BudgetCategory.updated_at,
         func.coalesce(func.sum(Expense.amount), 0).label('spent_amount')
     ).outerjoin(
         Expense, 
@@ -349,32 +356,37 @@ def get_budget_summary(
     
     # Calculate totals
     total_budget = sum(cat.budget_amount for cat in categories_with_spending)
-    total_spent = sum(cat.spent_amount for cat in categories_with_spending)
-    total_remaining = total_budget - total_spent
+    total_expenses = sum(cat.spent_amount for cat in categories_with_spending)
+    remaining_budget = total_budget - total_expenses
     
-    # Calculate budget utilization
-    budget_utilization = (total_spent / total_budget * 100) if total_budget > 0 else 0
+    # Get total expense count for current user
+    total_expense_count = db.query(Expense).filter(Expense.user_id == current_user.id).count()
     
-    # Prepare category summaries
+    # Prepare category summaries using BudgetCategoryResponse schema
     category_summaries = []
     for cat in categories_with_spending:
         remaining = cat.budget_amount - cat.spent_amount
-        utilization = (cat.spent_amount / cat.budget_amount * 100) if cat.budget_amount > 0 else 0
         
-        category_summaries.append({
-            "id": cat.id,
-            "name": cat.name,
-            "budget_amount": float(cat.budget_amount),
-            "spent_amount": float(cat.spent_amount),
-            "remaining_budget": float(remaining),
-            "utilization_percentage": float(utilization)
-        })
+        category_summaries.append(BudgetCategoryResponse(
+            id=cat.id,
+            name=cat.name,
+            description=cat.description,
+            budget_amount=cat.budget_amount,
+            total_expenses=cat.spent_amount,
+            remaining_budget=remaining,
+            user_id=cat.user_id,
+            color=cat.color,
+            icon=cat.icon,
+            is_active=cat.is_active,
+            created_at=cat.created_at,
+            updated_at=cat.updated_at
+        ))
     
     return BudgetSummary(
         total_budget=float(total_budget),
-        total_spent=float(total_spent),
-        total_remaining=float(total_remaining),
-        budget_utilization=float(budget_utilization),
-        category_count=len(categories_with_spending),
+        total_expenses=float(total_expenses),
+        remaining_budget=float(remaining_budget),
+        categories_count=len(categories_with_spending),
+        expenses_count=total_expense_count,
         categories=category_summaries
     )

@@ -292,7 +292,8 @@ def get_recent_expenses(
     expenses = []
     
     for expense, category_name in recent_expenses:
-        days_ago = (today - expense.expense_date).days
+        expense_date = expense.expense_date.date() if hasattr(expense.expense_date, 'date') else expense.expense_date
+        days_ago = (today - expense_date).days
         
         expenses.append(RecentExpenseData(
             id=expense.id,

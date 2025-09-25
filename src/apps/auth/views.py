@@ -4,7 +4,7 @@ from datetime import timedelta
 import uuid
 from src.core.database import get_db
 from src.core.security import (
-    verify_password, hash_password, create_access_token, 
+    verify_password, hash_password, create_access_token, create_refresh_token,
     create_email_verification_token, verify_email_token, validate_password_strength,
     create_password_reset_token, verify_password_reset_token
 )
@@ -12,7 +12,7 @@ from src.core.settings import settings
 from src.core.email import email_service
 from .models import User
 from .schemas import (
-    UserCreate, UserLogin, UserResponse, Token, 
+    UserCreate, UserLogin, UserResponse, Token, RefreshTokenRequest, RefreshTokenResponse,
     EmailVerificationRequest, ResendVerificationRequest,
     ForgotPasswordRequest, ResetPasswordRequest, ChangePasswordRequest
 )
@@ -97,22 +97,78 @@ def login(user_credentials: UserLogin, db: Session = Depends(get_db)):
             detail="Please verify your email address before logging in."
         )
     
-    # Create access token
+    # Create access token and refresh token
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.email}, expires_delta=access_token_expires
     )
+    
+    refresh_token_expires = timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    refresh_token = create_refresh_token(
+        data={"sub": user.email}, expires_delta=refresh_token_expires
+    )
+    
+    # Store refresh token in database
+    user.refresh_token = refresh_token
     
     # Update last login
     from sqlalchemy import func
     user.last_login = func.now()
     db.commit()
     
-    return {
-        "access_token": access_token, 
-        "token_type": "bearer",
-        "user": user
-    }
+    return Token(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer",
+        expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # Convert to seconds
+        user=user
+    )
+
+@router.post("/refresh", response_model=RefreshTokenResponse)
+def refresh_access_token(
+    refresh_data: RefreshTokenRequest,
+    db: Session = Depends(get_db)
+):
+    """Refresh access token using refresh token."""
+    from src.core.security import verify_refresh_token
+    
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate refresh token",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    
+    # Verify refresh token
+    payload = verify_refresh_token(refresh_data.refresh_token)
+    if payload is None:
+        raise credentials_exception
+        
+    email: str = payload.get("sub")
+    if email is None:
+        raise credentials_exception
+    
+    # Find user and verify stored refresh token matches
+    user = db.query(User).filter(User.email == email).first()
+    if user is None or user.refresh_token != refresh_data.refresh_token:
+        raise credentials_exception
+        
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Inactive user"
+        )
+        
+    # Create new access token
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.email}, expires_delta=access_token_expires
+    )
+    
+    return RefreshTokenResponse(
+        access_token=access_token,
+        token_type="bearer",
+        expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60  # Convert to seconds
+    )
 
 @router.post("/verify-email")
 def verify_email(
@@ -180,8 +236,15 @@ def get_current_user_info(current_user: User = Depends(get_active_user)):
     return current_user
 
 @router.post("/logout")
-def logout():
-    """Logout user (client should discard token)."""
+def logout(
+    current_user: User = Depends(get_active_user),
+    db: Session = Depends(get_db)
+):
+    """Logout user and invalidate refresh token."""
+    # Clear refresh token from database
+    current_user.refresh_token = None
+    db.commit()
+    
     return {"message": "Successfully logged out"}
 
 @router.post("/forgot-password")

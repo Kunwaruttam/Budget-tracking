@@ -40,8 +40,18 @@ class UserResponse(UserBase):
 
 class Token(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str
+    expires_in: int  # Access token expiration in seconds
     user: UserResponse
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+class RefreshTokenResponse(BaseModel):
+    access_token: str
+    token_type: str
+    expires_in: int  # Access token expiration in seconds
 
 class TokenData(BaseModel):
     email: Optional[str] = None
